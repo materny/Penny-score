@@ -66,8 +66,6 @@ type PartScore = { key: string; label: string; score: number; max: number; area:
 
 // --- Helpers
 const clamp = (x:number, min:number, max:number) => Math.max(min, Math.min(max, x));
-const pct = (x:number) => x/100;
-const bandLTV = (max:number, ltv:number) => ltv < 0.60 ? max : ltv < 0.80 ? (max*2)/3 : ltv < 0.95 ? (max*1)/3 : 0;
 
 // --- Scoring engine (simplificeret og realistisk)
 function scoreAll(i: Inputs){
@@ -231,7 +229,7 @@ const tipDatabase = {
   }
 };
 
-function getRandomTipForArea(area: number, currentInputs: Inputs): {text: string, boost: string, icon: string, title: string} | null {
+function getRandomTipForArea(area: number, _currentInputs: Inputs): {text: string, boost: string, icon: string, title: string} | null {
   const areaData = tipDatabase[area as keyof typeof tipDatabase];
   if (!areaData) return null;
   
@@ -245,7 +243,7 @@ function getRandomTipForArea(area: number, currentInputs: Inputs): {text: string
 }
 
 // --- UI helpers
-const areaMeta: Record<number, {title:string, icon: React.ComponentType<any>}> = {
+const areaMeta: Record<number, {title:string, icon: React.ComponentType<Record<string, unknown>>}> = {
   1: { title: "Indkomst & job", icon: TrendingUp },
   2: { title: "Gæld", icon: CreditCard },
   3: { title: "Opsparing", icon: PiggyBank },
@@ -288,7 +286,6 @@ const defaultInputs: Inputs = {
 
 // --- Component
 export default function PennyScoreStepper(){
-  const [step, setStep] = useState(0);
   const [i, setI] = useState<Inputs>(defaultInputs);
   const [showPremiumPopup, setShowPremiumPopup] = useState(false);
   const res = useMemo(()=>scoreAll(i), [i]);
@@ -405,16 +402,14 @@ export default function PennyScoreStepper(){
     const emergencyDeficit = Math.max(0, (i.fixedCostAvg12m * 3) - i.emergencyBufferKr);
     
     // Estimerede årlige besparelser ved optimering
-    let yearlyInterestSavings = currentDebtInterest * 12; // Spare renter på gæld
-    let mortgageSavings = currentLTV > 0.7 ? (i.houseLoan * 0.005) : 0; // 0.5% lavere rente
-    let emergencyOpportunityCost = emergencyDeficit * 0.05; // 5% afkast på manglende buffer
-    let optimizedSavingsRate = Math.max(0, (monthlyIncome * 0.15) - (monthlyIncome * (i.savingsRatePct/100))) * 12;
+    const yearlyInterestSavings = currentDebtInterest * 12; // Spare renter på gæld
+    const mortgageSavings = currentLTV > 0.7 ? (i.houseLoan * 0.005) : 0; // 0.5% lavere rente
+    const emergencyOpportunityCost = emergencyDeficit * 0.05; // 5% afkast på manglende buffer
+    const optimizedSavingsRate = Math.max(0, (monthlyIncome * 0.15) - (monthlyIncome * (i.savingsRatePct/100))) * 12;
     
     const totalPotential = yearlyInterestSavings + mortgageSavings + emergencyOpportunityCost + optimizedSavingsRate;
     return Math.round(totalPotential);
   }, [i]);
-
-  const StepIcon = [TrendingUp, Wallet, CreditCard, House, PiggyBank, BarChart3, Shield, Info][Math.min(step,7)];
 
   return (
     <>
@@ -513,7 +508,7 @@ export default function PennyScoreStepper(){
                   <Wallet className="h-5 w-5 text-primary"/>
                 </div>
                 <div>
-                  <CardTitle className="text-xl">{steps[step].title}</CardTitle>
+                  <CardTitle className="text-xl">{steps[0].title}</CardTitle>
                   <p className="text-sm text-muted-foreground">Udfyld dine oplysninger nedenfor</p>
                 </div>
               </div>
@@ -521,13 +516,13 @@ export default function PennyScoreStepper(){
           <CardContent>
             <AnimatePresence mode="wait">
               <motion.div
-                key={step}
+                key={0}
                 initial={{opacity:0, y:8}}
                 animate={{opacity:1, y:0}}
                 exit={{opacity:0, y:-8}}
                 transition={{duration:0.2}}
               >
-                {steps[step].fields}
+                {steps[0].fields}
               </motion.div>
             </AnimatePresence>
 
