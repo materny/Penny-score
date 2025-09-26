@@ -71,9 +71,8 @@ const clamp = (x:number, min:number, max:number) => Math.max(min, Math.min(max, 
 function scoreAll(i: Inputs){
   // 1. INDKOMST vs UDGIFTER (200 points)
   const IUR = i.netIncome12m/Math.max(i.fixedCostAvg12m,1);
-  // IUR fra 1.0 til 1.5: 1.0 = 0%, 1.5 = 100%, men med bedre kurve
-  // Ved IUR=1.21 skal vi have ~40-45% = ca. 63-68 point
-  const iurScore = Math.min(1, Math.pow((IUR - 1.0) / 0.5, 0.7)); // Mindre hård kurve
+  // Sørg for at IUR aldrig går under 0 - hvis udgifter > indkomst, giv 0 point
+  const iurScore = IUR >= 1.0 ? Math.min(1, Math.pow((IUR - 1.0) / 0.5, 0.7)) : 0;
   const s1 = 150 * iurScore; 
   
   const jobPts = i.jobType==="fastansat"?50: i.jobType==="tidsbegrænset"?35: i.jobType==="selvstændig"?25: i.jobType==="dagpenge"?10: 25;
@@ -118,6 +117,119 @@ function scoreAll(i: Inputs){
   const total = parts.reduce((s,p)=>s+p.score,0);
   const max = parts.reduce((s,p)=>s+p.max,0);
   return { total, max, percent:(total/max)*100, parts };
+}
+
+// --- Advarsels-system for kritiske finansielle problemer
+type FinancialWarning = {
+  id: string;
+  level: 'critical' | 'warning' | 'opportunity';
+  icon: string;
+  title: string;
+  description: string;
+  action: string;
+  color: string;
+};
+
+function getFinancialWarnings(i: Inputs): FinancialWarning[] {
+  const warnings: FinancialWarning[] = [];
+  
+  // 1. Indkomst mindre end udgifter (KRITISK)
+  if (i.netIncome12m < i.fixedCostAvg12m) {
+    warnings.push({
+      id: 'income-deficit',
+      level: 'critical',
+      icon: '🚨',
+      title: 'Kritisk: Du har underskud!',
+      description: `Du mangler ${(i.fixedCostAvg12m - i.netIncome12m).toLocaleString()} kr./måned for at dække dine faste udgifter.`,
+      action: 'Vi kan hjælpe dig med at nedbringe udgifter og øge indkomst',
+      color: 'border-red-500 bg-red-50'
+    });
+  }
+  
+  // 2. Boligværdi mindre end gæld (Undervands-lån)
+  if (i.houseValue > 0 && i.houseLoan > i.houseValue) {
+    warnings.push({
+      id: 'underwater-mortgage',
+      level: 'critical',
+      icon: '🏠',
+      title: 'Dit hus er mindre værd end lånet!',
+      description: `Restgæld: ${i.houseLoan.toLocaleString()} kr. vs værdi: ${i.houseValue.toLocaleString()} kr.`,
+      action: 'Vi kan hjælpe med gældsanering og refinansiering',
+      color: 'border-red-500 bg-red-50'
+    });
+  }
+  
+  // 3. Nødopsparing under 1 måneds udgifter (KRITISK)
+  if (i.emergencyBufferKr < i.fixedCostAvg12m) {
+    warnings.push({
+      id: 'no-emergency-fund',
+      level: 'critical',
+      icon: '⚠️',
+      title: 'Ingen nødopsparing!',
+      description: `Du har kun ${i.emergencyBufferKr.toLocaleString()} kr. til nødsituationer.`,
+      action: 'Du skal have mindst 3 måneders udgifter i buffer',
+      color: 'border-red-500 bg-red-50'
+    });
+  }
+  
+  // 4. Nødopsparing kan dække hele gælden (MULIGHED)
+  if (i.emergencyBufferKr > i.shortDebtBalance && i.shortDebtBalance > 0) {
+    const savings = (i.shortDebtBalance * 0.15); // Antag 15% årlig rente på gæld
+    warnings.push({
+      id: 'pay-off-debt-opportunity',
+      level: 'opportunity',
+      icon: '💡',
+      title: 'Du kan fjerne din gæld nu!',
+      description: `Brug ${i.shortDebtBalance.toLocaleString()} kr. af din opsparing til at fjerne gælden.`,
+      action: `Du vil spare ${Math.round(savings).toLocaleString()} kr./år i renter`,
+      color: 'border-green-500 bg-green-50'
+    });
+  }
+  
+  // 5. Meget høj gæld i forhold til indkomst (ADVARSEL)
+  const annualIncome = i.netIncome12m * 12;
+  if (i.shortDebtBalance / annualIncome > 0.5) {
+    warnings.push({
+      id: 'high-debt-ratio',
+      level: 'warning',
+      icon: '💳',
+      title: 'For høj gæld i forhold til indkomst',
+      description: `Din gæld er ${Math.round((i.shortDebtBalance / annualIncome) * 100)}% af din årsindkomst.`,
+      action: 'Maks anbefalet gæld er 30% af årsindkomst',
+      color: 'border-orange-500 bg-orange-50'
+    });
+  }
+  
+  // 6. Meget lav opsparingsrate (ADVARSEL)
+  if (i.savingsRatePct < 5) {
+    warnings.push({
+      id: 'low-savings-rate',
+      level: 'warning',  
+      icon: '🐷',
+      title: 'For lav opsparingsrate',
+      description: `Du sparer kun ${i.savingsRatePct}% af din indkomst.`,
+      action: 'Prøv at spare mindst 10-15% af din indkomst',
+      color: 'border-orange-500 bg-orange-50'
+    });
+  }
+  
+  // 7. Meget høj boliggæld (LTV > 90%)
+  if (i.houseValue > 0 && i.houseLoan > 0 && (i.houseLoan / i.houseValue) > 0.9) {
+    warnings.push({
+      id: 'high-ltv',
+      level: 'warning',
+      icon: '🏡',
+      title: 'Høj belåningsgrad på bolig',
+      description: `Din bolig er belånt ${Math.round((i.houseLoan / i.houseValue) * 100)}%.`,
+      action: 'Overvej at nedbetale boliglån eller renovere for at øge værdi',
+      color: 'border-orange-500 bg-orange-50'
+    });
+  }
+  
+  return warnings.sort((a, b) => {
+    const order = { critical: 0, warning: 1, opportunity: 2 };
+    return order[a.level] - order[b.level];
+  });
 }
 
 // --- Smart Tips System
@@ -289,6 +401,7 @@ export default function PennyScoreStepper(){
   const [i, setI] = useState<Inputs>(defaultInputs);
   const [showPremiumPopup, setShowPremiumPopup] = useState(false);
   const res = useMemo(()=>scoreAll(i), [i]);
+  const warnings = useMemo(() => getFinancialWarnings(i), [i]);
 
   const steps = [
     {
@@ -658,6 +771,76 @@ export default function PennyScoreStepper(){
           </Card>
         </div>
       </div>
+
+      {/* Financial Warnings Section */}
+      {warnings && warnings.length > 0 && (
+        <div className="mt-6 max-w-4xl mx-auto">
+          <Card className="shadow-lg border-red-200">
+            <CardHeader className="pb-4">
+              <CardTitle className="text-lg flex items-center gap-2">
+                <div className="h-5 w-5 text-red-500">⚠️</div>
+                Vigtige Finansielle Advarsler
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-4">
+                {warnings.map((warning, index) => (
+                  <div 
+                    key={index} 
+                    className={`p-4 rounded-lg border-l-4 ${
+                      warning.level === 'critical' 
+                        ? 'bg-red-50 border-red-500 border border-red-200' 
+                        : warning.level === 'warning'
+                        ? 'bg-yellow-50 border-yellow-500 border border-yellow-200'
+                        : 'bg-green-50 border-green-500 border border-green-200'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1">
+                        <h3 className={`font-semibold text-sm mb-1 ${
+                          warning.level === 'critical' ? 'text-red-800' 
+                          : warning.level === 'warning' ? 'text-yellow-800'
+                          : 'text-green-800'
+                        }`}>
+                          {warning.icon} {warning.title}
+                        </h3>
+                        <p className={`text-sm mb-2 ${
+                          warning.level === 'critical' ? 'text-red-700' 
+                          : warning.level === 'warning' ? 'text-yellow-700'
+                          : 'text-green-700'
+                        }`}>
+                          {warning.description}
+                        </p>
+                        <p className={`text-xs ${
+                          warning.level === 'critical' ? 'text-red-600' 
+                          : warning.level === 'warning' ? 'text-yellow-600'
+                          : 'text-green-600'
+                        }`}>
+                          💡 {warning.action}
+                        </p>
+                      </div>
+                      <Button 
+                        variant="outline" 
+                        size="sm" 
+                        className={`ml-3 ${
+                          warning.level === 'critical' 
+                            ? 'border-red-500 text-red-600 hover:bg-red-50' 
+                            : warning.level === 'warning'
+                            ? 'border-yellow-500 text-yellow-600 hover:bg-yellow-50'
+                            : 'border-green-500 text-green-600 hover:bg-green-50'
+                        }`}
+                        onClick={() => setShowPremiumPopup(true)}
+                      >
+                        Vi kan hjælpe dig
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
 
       {/* Full width improvements section */}
       <div className="mt-8 max-w-4xl mx-auto">
